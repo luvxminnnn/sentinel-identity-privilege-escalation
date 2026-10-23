@@ -1,0 +1,49 @@
+SecurityEvent
+| extend UserName = case(
+    EventID in (4624, 4625), extract(@"([^\\]+)$", 1, Account),
+    ""
+)
+| where
+    (EventID == 4625 and UserName == "soclab-user")
+    or (EventID == 4624 and UserName == "soclab-user")
+    or (EventID == 4732 and TargetAccount has "Administrators")
+| summarize
+    FailedLogons = countif(EventID == 4625),
+    SuccessfulLogons = countif(EventID == 4624),
+    AdminGroupChanges = countif(EventID == 4732),
+    FirstFailed = minif(TimeGenerated, EventID == 4625),
+    LastFailed = maxif(TimeGenerated, EventID == 4625),
+    SuccessTime = maxif(TimeGenerated, EventID == 4624),
+    PrivilegeTime = maxif(TimeGenerated, EventID == 4732),
+    SuccessfulLogonSIDs = make_set_if(
+        TargetUserSid,
+        EventID == 4624
+            and isnotempty(TargetUserSid)
+            and TargetUserSid != "S-1-0-0"
+    ),
+    AdminMemberSIDs = make_set_if(
+        MemberSid,
+        EventID == 4732
+            and isnotempty(MemberSid)
+    )
+    by Computer
+| extend MatchingSID = set_intersect(
+    SuccessfulLogonSIDs,
+    AdminMemberSIDs
+)
+| where FailedLogons >= 3
+| where SuccessfulLogons >= 1
+| where AdminGroupChanges >= 1
+| where array_length(MatchingSID) > 0
+| where LastFailed < SuccessTime
+| where SuccessTime < PrivilegeTime
+| project
+    Computer,
+    FailedLogons,
+    SuccessfulLogons,
+    AdminGroupChanges,
+    FirstFailed,
+    LastFailed,
+    SuccessTime,
+    PrivilegeTime,
+    MatchingSID
