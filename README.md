@@ -179,8 +179,6 @@ Failed authentication attempts may contain an unresolved SID such as `S-1-0-0`, 
 
 The account creation event was also reviewed as supporting investigation context.
 
-![Account creation validation](screenshots/12-account-creation-validation.png)
-
 ---
 
 ## SID-Based Correlation
@@ -414,8 +412,6 @@ The new events confirmed:
 - subsequent Administrators-group modification;
 - SID correlation between authentication and privilege-change activity.
 
-![Fresh identity attack events](screenshots/19-fresh-identity-attack-events.png)
-
 Microsoft Sentinel successfully generated the high-severity incident:
 
 `Suspicious Authentication Followed by Privilege Escalation`
@@ -545,14 +541,12 @@ sentinel-identity-privilege-escalation/
     ├── 09-identity-attack-timeline.png
     ├── 10-identity-timeline-kql-query.png
     ├── 11-logon-account-sid-validation.png
-    ├── 12-account-creation-validation.png
     ├── 13-sid-correlated-identity-detection.png
     ├── 14-automation-rule-severity-and-tag.png
     ├── 15-automation-rule-investigation-task.png
     ├── 16-host-entity-mapping.png
     ├── 17-final-analytics-rule-overview.png
     ├── 18-final-rule-scheduling-and-incidents.png
-    ├── 19-fresh-identity-attack-events.png
     ├── 20-final-identity-incident-with-automation.png
     └── 21-final-incidents-overview.png
 ```
