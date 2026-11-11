@@ -1,39 +1,58 @@
 # Identity Compromise and Privilege Escalation Detection with Microsoft Sentinel
 
-## Overview
+Blue Team lab for detecting suspicious authentication activity followed by local privilege escalation using Microsoft Sentinel.
 
-This project demonstrates an end-to-end Blue Team investigation and detection workflow for suspicious authentication activity followed by privilege escalation.
+The project correlates failed and successful Windows logons with local Administrators group membership changes. The final detection uses Windows account SIDs to verify that the account that successfully authenticated is the same account later added to the Administrators group.
 
-The lab was built in Microsoft Azure using a Windows Server endpoint and Microsoft Sentinel. A controlled identity-based attack sequence was generated, investigated through Windows Security Events, correlated using KQL, converted into a scheduled analytics rule, and validated through a real Sentinel incident.
+## Results
 
-The final detection goes beyond host-level correlation. It verifies that the SID associated with the successful authentication is the same SID later added to the local Administrators group.
+| Area | Result |
+|---|---|
+| Authentication telemetry | Failed and successful logons collected through Windows Security Events |
+| Privilege telemetry | Local Administrators membership changes detected with Event ID `4732` |
+| Correlation | Successful-logon SID matched against the SID added to Administrators |
+| Sequence validation | `4625 → 4624 → 4732` order enforced in KQL |
+| Detection | Generic query works without hardcoding the lab username |
+| Analytics | Microsoft Sentinel scheduled rule generated incidents |
+| MITRE ATT&CK | Authentication and privilege-escalation behavior mapped to ATT&CK |
+| Entity mapping | Host entity added to Sentinel incidents |
+| Automation | Severity, tagging, and analyst investigation task applied automatically |
+| Final classification | Benign Positive — authorized lab simulation |
 
-Automated incident triage was also configured to apply severity, tagging, Host entity mapping, and an investigation task when the detection generated an incident.
+## Detection flow
 
----
+```text
+Repeated Failed Logons
+        |
+        v
+Event ID 4625
+        |
+        v
+Successful Logon
+        |
+        v
+Event ID 4624
+        |
+        v
+Extract authenticated account SID
+        |
+        v
+Local Administrators Group Change
+        |
+        v
+Event ID 4732
+        |
+        v
+Compare TargetUserSid with MemberSid
+        |
+        v
+Validate event order
+        |
+        v
+Microsoft Sentinel Incident
+```
 
-## Project Objectives
-
-The main goals were to:
-
-- collect Windows authentication and account-management telemetry;
-- simulate repeated failed authentication attempts;
-- identify a subsequent successful authentication;
-- detect addition of the authenticated account to the local Administrators group;
-- correlate authentication and privilege events using the Windows account SID;
-- validate the chronological order of the activity in KQL;
-- create a Microsoft Sentinel scheduled analytics rule;
-- map the behavior to MITRE ATT&CK;
-- automatically generate a high-severity incident;
-- enrich the incident with a Host entity;
-- automate initial SOC triage actions;
-- document investigation and remediation steps.
-
----
-
-## Lab Environment
-
-The project used:
+## Environment
 
 - Microsoft Azure
 - Windows Server 2025
@@ -42,493 +61,245 @@ The project used:
 - Azure Monitor Agent
 - Windows Security Events via AMA
 - Data Collection Rule
-- Kusto Query Language (KQL)
-- Microsoft Defender incident interface
+- Kusto Query Language
 
 Monitored endpoint:
 
 `win-blue-team-lab`
 
-Dedicated local test account:
-
-`soclab-user`
-
----
+A dedicated local account, `soclab-user`, was used only to generate controlled test activity. The final detection query is not hardcoded to that username.
 
 ## Relevant Windows Security Events
 
-| Event ID | Description | Use in Project |
-| --- | --- | --- |
+| Event ID | Description | Use |
+|---|---|---|
 | `4625` | An account failed to log on | Detect repeated authentication failures |
-| `4624` | An account was successfully logged on | Identify successful authentication and obtain the account SID |
-| `4720` | A user account was created | Investigation context for the test account |
-| `4732` | A member was added to a security-enabled local group | Detect addition to the local Administrators group |
+| `4624` | An account was successfully logged on | Identify successful authentication and account SID |
+| `4720` | A user account was created | Investigation context |
+| `4732` | A member was added to a security-enabled local group | Detect local Administrators membership change |
 | `4672` | Special privileges assigned to new logon | Additional investigation context |
 
-Event `4720` was reviewed during the investigation but was intentionally not made a mandatory condition in the final analytics rule. Requiring account creation within the same detection window would make the detection unnecessarily dependent on when the account was created.
+Event ID `4720` was intentionally kept as investigation context instead of a required detection condition. Requiring account creation in the same window would make the rule dependent on when the account was originally created.
 
----
+## Audit policy validation
 
-## Audit Policy Validation
+The Windows audit configuration was checked before generating test activity.
 
-Before generating test activity, the relevant Windows audit policies were verified.
-
-The system was configured to record:
+The endpoint recorded:
 
 - successful and failed logons;
-- account lockout activity;
-- special logons;
-- user account management;
-- security group management.
-
-This ensured that the required authentication and privilege-management telemetry was available in Microsoft Sentinel.
+- account-management events;
+- security group management;
+- special logons.
 
 ![Audit policy validation](screenshots/01-audit-policy-validation.png)
 
----
+## Controlled test activity
 
-## Test Account Creation
+A dedicated local test account was created:
 
-A dedicated local account named `soclab-user` was created for the controlled simulation.
+`soclab-user`
 
 ![Test user created](screenshots/02-test-user-created.png)
 
-The account initially belonged only to the standard local Users group and had not yet been used for authentication.
-
----
-
-## Controlled Authentication Activity
-
-Several failed authentication attempts were intentionally generated for `soclab-user`.
-
-They were followed by a successful authentication using the same account.
+Several failed authentication attempts were generated, followed by a successful authentication.
 
 ![Successful test user logon](screenshots/03-successful-test-user-logon.png)
 
-Microsoft Sentinel recorded the authentication activity through Windows Security Events.
+The events were ingested into Microsoft Sentinel.
 
 ![Identity logon events](screenshots/04-identity-logon-events.png)
 
-The investigation showed multiple `4625` failed logons followed by a `4624` successful logon for the test account.
+## Account creation context
 
----
+Event ID `4720` confirmed creation of the test account.
 
-## Account Creation Evidence
+![User account created](screenshots/05-user-account-created-event.png)
 
-The account creation was also visible in Microsoft Sentinel as Event ID `4720`.
+This event was useful during investigation but was not required by the final detection.
 
-![User account created event](screenshots/05-user-account-created-event.png)
+## Privilege escalation simulation
 
-This event was useful during the investigation, although it was later removed as a mandatory requirement from the final production-style detection logic.
+The test account was added to the local Administrators group.
 
----
+Windows generated Event ID:
 
-## Privilege Escalation Simulation
-
-The test account was added to the local `Administrators` group:
-
-```powershell
-net localgroup Administrators soclab-user /add
-```
-
-The new membership was validated on the endpoint.
+`4732 — A member was added to a security-enabled local group`
 
 ![User added to Administrators](screenshots/06-user-added-to-administrators.png)
 
-Windows generated Event ID `4732`, recording the privileged group membership change.
-
-The event contained the SID of the account added to the group.
+The event exposed the SID of the account added to the group.
 
 ![Administrator membership SID](screenshots/07-administrator-membership-sid.png)
 
-The SID of `soclab-user` was independently validated on the endpoint.
+The account SID was independently validated.
 
 ![User SID validation](screenshots/08-user-sid-validation.png)
 
----
+## Attack timeline
 
-## Initial Investigation Timeline
-
-The first investigation query organized the relevant events into a chronological timeline.
-
-The observed sequence was:
+The lab produced the following sequence:
 
 ```text
-Failed Logon
-Failed Logon
-Failed Logon
-Successful Logon
-Added to Administrators
+Multiple 4625 failed logons
+        |
+        v
+4624 successful logon
+        |
+        v
+4732 Administrators membership change
 ```
 
 ![Identity attack timeline](screenshots/09-identity-attack-timeline.png)
 
-The KQL used to construct the investigation timeline was also documented.
+KQL was used to validate the chronological relationship between these events.
 
-![Identity timeline KQL query](screenshots/10-identity-timeline-kql-query.png)
+![Timeline KQL query](screenshots/10-identity-timeline-kql-query.png)
 
----
+## SID correlation
 
-## SID Validation
+The strongest part of the detection is account-level SID correlation.
 
-A successful Event ID `4624` contained a valid `TargetUserSid` for `soclab-user`.
+A successful `4624` event exposes:
 
-Failed authentication attempts may contain an unresolved SID such as `S-1-0-0`, so the successful authentication was used as the reliable identity-to-SID bridge.
+`TargetUserSid`
+
+A `4732` group-membership event exposes:
+
+`MemberSid`
+
+The detection requires these values to match.
+
+This prevents the rule from correlating a successful logon from one account with an Administrators-group change affecting a different account.
 
 ![Logon account SID validation](screenshots/11-logon-account-sid-validation.png)
 
-The account creation event was also reviewed as supporting investigation context.
+![SID correlated detection](screenshots/13-sid-correlated-identity-detection.png)
 
----
+## Detection logic
 
-## SID-Based Correlation
+The final detection:
 
-A major goal of the project was to prove that the account successfully authenticated in Event ID `4624` was the same account later added to the local Administrators group in Event ID `4732`.
+1. collects `4624` and `4625` authentication events;
+2. groups authentication activity by host and username;
+3. requires at least three failed logons;
+4. requires at least one successful logon;
+5. verifies that the failures occurred before the success;
+6. identifies Event ID `4732` changes to the Administrators group;
+7. compares the successful-logon SID with the SID added to the group;
+8. verifies that the privilege change happened after the successful logon.
 
-The relevant fields were:
+The detection is no longer tied to `soclab-user`.
 
-```text
-4624 -> TargetUserSid
-4732 -> MemberSid
-```
+The complete KQL is stored in:
 
-The detection collects both SID sets and compares them using:
+[`queries/identity-privilege-escalation.kql`](queries/identity-privilege-escalation.kql)
 
-```kql
-set_intersect(SuccessfulLogonSIDs, AdminMemberSIDs)
-```
+## Microsoft Sentinel analytics rule
 
-The detection proceeds only if:
+The final query was converted into a scheduled analytics rule.
 
-```kql
-array_length(MatchingSID) > 0
-```
+The rule generated an incident only when the correlated sequence matched.
 
-This prevents the rule from triggering merely because unrelated authentication and group-modification events occurred on the same host.
+![Final analytics rule](screenshots/17-final-analytics-rule-overview.png)
 
-![SID correlated identity detection](screenshots/13-sid-correlated-identity-detection.png)
+Rule scheduling and incident settings were configured in Microsoft Sentinel.
 
----
+![Rule scheduling](screenshots/18-final-rule-scheduling-and-incidents.png)
 
-## Final Detection Logic
+## Entity mapping
 
-The final detection identifies the following behavior:
-
-```text
-3 or more failed logons
-          |
-          v
-Successful logon
-          |
-          v
-Obtain authenticated account SID
-          |
-          v
-Same SID added to local Administrators
-          |
-          v
-High-severity Sentinel incident
-```
-
-The rule also validates the chronological sequence:
-
-```text
-LastFailed < SuccessTime < PrivilegeTime
-```
-
-This prevents an earlier unrelated Administrators-group modification from satisfying the detection.
-
----
-
-## Final KQL Detection
-
-```kql
-SecurityEvent
-| extend UserName = case(
-    EventID in (4624, 4625), extract(@"([^\\]+)$", 1, Account),
-    ""
-)
-| where
-    (EventID == 4625 and UserName == "soclab-user")
-    or (EventID == 4624 and UserName == "soclab-user")
-    or (EventID == 4732 and TargetAccount has "Administrators")
-| summarize
-    FailedLogons = countif(EventID == 4625),
-    SuccessfulLogons = countif(EventID == 4624),
-    AdminGroupChanges = countif(EventID == 4732),
-    FirstFailed = minif(TimeGenerated, EventID == 4625),
-    LastFailed = maxif(TimeGenerated, EventID == 4625),
-    SuccessTime = maxif(TimeGenerated, EventID == 4624),
-    PrivilegeTime = maxif(TimeGenerated, EventID == 4732),
-    SuccessfulLogonSIDs = make_set_if(
-        TargetUserSid,
-        EventID == 4624
-            and isnotempty(TargetUserSid)
-            and TargetUserSid != "S-1-0-0"
-    ),
-    AdminMemberSIDs = make_set_if(
-        MemberSid,
-        EventID == 4732
-            and isnotempty(MemberSid)
-    )
-    by Computer
-| extend MatchingSID = set_intersect(
-    SuccessfulLogonSIDs,
-    AdminMemberSIDs
-)
-| where FailedLogons >= 3
-| where SuccessfulLogons >= 1
-| where AdminGroupChanges >= 1
-| where array_length(MatchingSID) > 0
-| where LastFailed < SuccessTime
-| where SuccessTime < PrivilegeTime
-| project
-    Computer,
-    FailedLogons,
-    SuccessfulLogons,
-    AdminGroupChanges,
-    FirstFailed,
-    LastFailed,
-    SuccessTime,
-    PrivilegeTime,
-    MatchingSID
-```
-
-The same query is stored separately in:
-
-```text
-queries/identity-privilege-escalation.kql
-```
-
----
-
-## Microsoft Sentinel Analytics Rule
-
-### Rule Name
-
-`Suspicious Authentication Followed by Privilege Escalation`
-
-### Severity
-
-`High`
-
-### Scheduling
-
-- Query frequency: 5 minutes
-- Lookup period: 30 minutes
-- Alert threshold: greater than 0 results
-- Incident creation: enabled
-- Alert grouping: disabled
-- Suppression: disabled
-
-### Entity Mapping
-
-The following Host entity mapping was configured:
-
-```text
-Entity type: Host
-Identifier: HostName
-Value: Computer
-```
-
-This allowed the affected endpoint to appear directly in the Sentinel incident graph.
+The affected Windows host was mapped into the Sentinel incident.
 
 ![Host entity mapping](screenshots/16-host-entity-mapping.png)
 
-### Final Rule
+This allowed the endpoint involved in the correlated authentication and privilege activity to appear directly in the investigation.
 
-![Final analytics rule overview](screenshots/17-final-analytics-rule-overview.png)
+## Automated incident triage
 
-![Final rule scheduling and incidents](screenshots/18-final-rule-scheduling-and-incidents.png)
+A Sentinel automation rule was configured to apply initial SOC triage actions.
 
----
+Automation included:
 
-## MITRE ATT&CK Mapping
+- incident severity handling;
+- tagging;
+- creation of an analyst investigation task.
 
-The detection was mapped to the following behaviors.
+![Automation severity and tag](screenshots/14-automation-rule-severity-and-tag.png)
 
-### Credential Access
+![Automation investigation task](screenshots/15-automation-rule-investigation-task.png)
 
-**T1110.001 — Brute Force: Password Guessing**
+The final incident included the automated triage actions.
 
-The controlled sequence included repeated incorrect password attempts followed by successful authentication.
+![Final identity incident](screenshots/20-final-identity-incident-with-automation.png)
 
-### Privilege Escalation
-
-**T1098.007 — Account Manipulation: Additional Local or Domain Groups**
-
-The authenticated account was subsequently added to the local Windows `Administrators` group, granting elevated privileges.
-
----
-
-## Automated Incident Response
-
-A Microsoft Sentinel automation rule was configured for incidents generated by the analytics rule.
-
-### Automation Rule
-
-`Identity-Privilege-Escalation`
-
-### Trigger
-
-`When incident is created`
-
-### Automated Actions
-
-The automation rule:
-
-- sets incident severity to `High`;
-- adds the tag `Identity-Privilege-Escalation`;
-- creates an investigation task for the analyst.
-
-![Automation rule severity and tag](screenshots/14-automation-rule-severity-and-tag.png)
-
-### Automated Investigation Task
-
-Task title:
-
-`Investigate suspected identity compromise and privilege escalation`
-
-Task instructions:
-
-> Review failed and successful logons, validate the affected account and SID, confirm the Administrators group modification, review related Event IDs 4624, 4625, 4672, 4720 and 4732, and determine whether account containment is required.
-
-![Automation rule investigation task](screenshots/15-automation-rule-investigation-task.png)
-
-Destructive response actions such as automatically disabling the account were intentionally not implemented.
-
-Account containment should occur only after an analyst confirms that the activity is malicious.
-
----
-
-## Final Validation
-
-After the final KQL, entity mapping, and automation configuration were completed, a fresh attack sequence was generated.
-
-The new events confirmed:
-
-- multiple failed logons;
-- a successful logon;
-- subsequent Administrators-group modification;
-- SID correlation between authentication and privilege-change activity.
-
-Microsoft Sentinel successfully generated the high-severity incident:
-
-`Suspicious Authentication Followed by Privilege Escalation`
-
-The incident contained:
-
-- High severity;
-- `Identity-Privilege-Escalation` tag;
-- active alert;
-- mapped Host entity `win-blue-team-lab`;
-- automatically created investigation task;
-- affected endpoint displayed in the incident graph.
-
-![Final identity incident with automation](screenshots/20-final-identity-incident-with-automation.png)
-
-The final incident list also confirmed the new High-severity detection and impacted asset.
+Multiple generated incidents were also visible in the Sentinel incident queue.
 
 ![Final incidents overview](screenshots/21-final-incidents-overview.png)
 
----
+## Detection tuning
 
-## Detection Pipeline
+The original lab query was explicitly filtered to:
 
-```text
-Windows Authentication Events
-            |
-            v
-Microsoft Sentinel
-            |
-            v
-KQL Correlation
-            |
-            v
-SID Validation
-            |
-            v
-Scheduled Analytics Rule
-            |
-            v
-High-Severity Alert
-            |
-            v
-Sentinel Incident
-            |
-            v
-Host Entity Mapping
-            |
-            v
-Automated SOC Triage
-```
+`soclab-user`
 
----
+That worked for controlled validation but was not suitable as a reusable detection.
 
-## Investigation Approach
+The final query removed the username hardcode and instead relies on:
 
-An analyst responding to this detection should:
+- authentication activity grouped by username;
+- event sequencing;
+- account SID correlation;
+- local Administrators group membership change.
 
-1. Review failed authentication attempts and their timing.
-2. Confirm the successful authentication associated with the account.
-3. Validate the authenticated account SID.
-4. Confirm that the same SID was added to the Administrators group.
-5. Identify the account responsible for modifying the group.
-6. Review the source and logon type of the successful authentication.
-7. Investigate Event ID `4672` for privileged-logon activity.
-8. Search the endpoint for suspicious process execution or persistence.
-9. Review other systems for authentication activity involving the same account.
-10. Determine whether containment is required.
+This makes the detection reusable across accounts while preserving the relationship between the successful authentication and privilege change.
 
----
+## Detection limitations
 
-## Response and Remediation
+The detection remains a lab-oriented behavioral rule.
 
-If the activity is confirmed to be malicious:
+Potential false positives include:
 
-- disable or reset the compromised account;
-- remove unauthorized membership from the Administrators group;
-- terminate unauthorized sessions;
-- investigate the source of the authentication activity;
-- review related endpoint activity;
-- search for lateral movement;
-- review persistence mechanisms;
-- rotate affected credentials;
-- preserve relevant security logs and evidence;
-- investigate whether additional systems were accessed.
+- users mistyping passwords before a successful login;
+- legitimate helpdesk password recovery;
+- approved local administrator assignment;
+- software deployment or endpoint-management activity;
+- administrator account maintenance.
 
-The affected endpoint should be isolated if additional evidence indicates active compromise.
+The query also correlates activity on the same host. Production deployments could improve precision with additional context such as:
 
----
+- logon type;
+- source IP address;
+- workstation name;
+- administrative account baselines;
+- approved group-management workflows;
+- process creation telemetry;
+- identity-risk signals;
+- Microsoft Defender for Endpoint telemetry;
+- Entra ID sign-in context.
 
-## Detection Considerations
+The threshold of three failed logons is a lab tuning choice and should not be treated as a universal production threshold.
 
-The final rule improves detection quality through SID and temporal correlation, but a production deployment would require additional tuning.
+## What changed after testing
 
-For example:
+| Finding | Change |
+|---|---|
+| Initial query was tied to `soclab-user` | Removed username hardcode |
+| Host-level correlation alone was too weak | Added account SID correlation |
+| Authentication and privilege events could occur independently | Enforced chronological sequence |
+| Account creation did not always belong in the same detection window | Kept Event ID `4720` as investigation context |
+| Incidents needed endpoint context | Added Host entity mapping |
+| Analysts needed repeatable first steps | Added automated investigation task |
+| Large KQL blocks reduced README readability | Kept final query in a dedicated `.kql` file |
 
-- authentication thresholds should reflect the organization's normal behavior;
-- service accounts and legitimate automation may generate repeated authentication failures;
-- approved administrative activity may legitimately modify local Administrators membership;
-- detection should ideally incorporate source IP, workstation, device identity, and additional endpoint telemetry;
-- the hardcoded `soclab-user` is appropriate only for this controlled lab and should be replaced with account-based grouping or behavioral logic in production;
-- identity-provider and EDR telemetry could provide additional context.
-
-The lab rule intentionally focuses on demonstrating the correlation technique and the complete SOC detection-to-response workflow.
-
----
-
-## Repository Structure
+## Repository structure
 
 ```text
 sentinel-identity-privilege-escalation/
-│
 ├── README.md
 ├── incident-report.md
-│
 ├── queries/
 │   └── identity-privilege-escalation.kql
-│
 └── screenshots/
     ├── 01-audit-policy-validation.png
     ├── 02-test-user-created.png
@@ -551,37 +322,10 @@ sentinel-identity-privilege-escalation/
     └── 21-final-incidents-overview.png
 ```
 
----
+## Scope
 
-## Skills Demonstrated
+This project was built in a controlled Azure lab using intentionally generated authentication and privilege-management activity.
 
-- Microsoft Sentinel
-- Kusto Query Language
-- Windows Security Event analysis
-- Authentication log investigation
-- Identity security
-- SID analysis
-- Threat hunting
-- Detection engineering
-- Event correlation
-- MITRE ATT&CK mapping
-- Privilege escalation detection
-- Sentinel analytics rules
-- Entity mapping
-- Incident investigation
-- SOC automation
-- Incident response planning
+The final incident was classified as a Benign Positive because the behavior was authorized security testing.
 
----
-
-## Conclusion
-
-This project demonstrates a complete identity-focused Blue Team workflow.
-
-Multiple failed authentication attempts were followed by a successful authentication, after which the authenticated account was added to the local Administrators group.
-
-Rather than correlating the events only by endpoint, the final detection compared the SID from the successful authentication with the SID added to the privileged group and validated the chronological sequence of activity.
-
-The detection was converted into a scheduled Microsoft Sentinel analytics rule, generated a high-severity incident, mapped the affected host, and automatically initiated SOC triage actions.
-
-The result is an end-to-end demonstration of log analysis, identity investigation, detection engineering, incident response, and security automation.
+The project demonstrates detection engineering and SOC investigation workflow. The detection should be tuned further before production use.
